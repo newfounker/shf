@@ -39,9 +39,10 @@ program main
 use, intrinsic :: iso_fortran_env
 implicit none
     character(len=50) :: dirname,line
-    integer :: nargs,i,j,k,l,m,nbase,stat,lcount
+    integer :: nargs,i,j,k,l,m,nbase,stat,lcount,nelec,natoms
     double precision  :: enuc,val,rmsD,deltaE
-    double precision,dimension(:),allocatable       :: diagS,en
+    integer,dimension(:),allocatable                :: atom
+    double precision,dimension(:),allocatable       :: x,y,z,diagS,en
     double precision,dimension(:),allocatable       :: energy
     double precision,dimension(:,:),allocatable     :: S,T,V,H,F,C,tranS,itraS,work
     double precision,dimension(:,:,:),allocatable   :: D
@@ -58,11 +59,27 @@ implicit none
     nargs = command_argument_count()
     if (nargs == 0) then
         write(*,*) "Usage: hf-scf dirname"
-        ! TODO: exit program
     endif
 
 ! Get dirname from commandline argument
     call get_command_argument(1,dirname)
+
+!!!------------------------------------------------------------------------!!!
+    write(*,*) "* Reading geometry from: ", trim(dirname)//'geom.dat'
+    open(0,file=trim(dirname)//'geom.dat',status='old')
+    read(0,*) natoms
+    allocate(atom(natoms))
+    allocate(x(natoms))
+    allocate(y(natoms))
+    allocate(z(natoms))
+    nelec = 0
+    do i = 1, natoms
+        read(0,*) atom(i), x(i), y(i), z(i)
+        nelec = nelec + atom(i)
+    enddo
+    close(0)
+
+!!!------------------------------------------------------------------------!!!
     write(*,*) "* Reading nuclear repulsion energy from: ", &
         trim(dirname)//'enuc.dat'
     open(1,file=trim(dirname)//'enuc.dat',status='old')
@@ -95,6 +112,9 @@ implicit none
         if(j/=k) S(k,j) = S(j,k)
     enddo
     close(2)
+    do i = 1, nbase
+        write(*,*) S(i,:)
+    enddo
 
 !!!------------------------------------------------------------------------!!!
     write(*,*) "* Reading kinetic energy from: ", trim(dirname)//'t.dat'
@@ -106,6 +126,9 @@ implicit none
         if(k/=j) T(k,j) = T(j,k)
     enddo
     close(3)
+    do i = 1, nbase
+        write(*,*) T(i,:)
+    enddo
 
 !!!------------------------------------------------------------------------!!!
     write(*,*) "* Reading nuclear attraction integrals from: ", &
@@ -118,6 +141,9 @@ implicit none
         if(k/=j) V(k,j) = V(j,k)
     enddo
     close(4)
+    do i = 1, nbase
+        write(*,*) V(i,:)
+    enddo
 
 !!!------------------------------------------------------------------------!!!
     write(*,*) "* Constructing approximated Hamiltonian..."
@@ -127,7 +153,7 @@ implicit none
         H(i,j) = T(i,j) + V(i,j)
         if(i/=j) H(j,i) = H(i,j)
     enddo
-  !     write(*,*) H(i,:)
+        write(*,*) H(i,:)
     enddo
     deallocate(T)
     deallocate(V)
@@ -180,9 +206,9 @@ implicit none
         enddo
     enddo
     call dgemm('N','N',nbase,nbase,nbase,ONE,tranS,nbase,itraS,nbase,ZERO,S,nbase)
-  ! do i = 1, nbase
-  !     write(*,*) S(i,:)
-  ! enddo
+    do i = 1, nbase
+        write(*,*) S(i,:)
+    enddo
     deallocate(tranS)
     deallocate(itraS)
     deallocate(diagS)
@@ -194,26 +220,27 @@ implicit none
     call dgemm('T','N',nbase,nbase,nbase,ONE,S,nbase,H,nbase,ZERO,work,nbase)
     call dgemm('N','N',nbase,nbase,nbase,ONE,work,nbase,S,nbase,ZERO,F,nbase)
     deallocate(work)
-  ! do i = 1, nbase
-  !     write(*,*) F(i,:)
-  ! enddo
+    do i = 1, nbase
+        write(*,*) F(i,:)
+    enddo
 
 !!!------------------------------------------------------------------------!!!
     write(*,*) "* Diagonalize Fock matrix..."
     allocate(C(nbase,nbase))
     allocate(en(nbase))
     call eigenvectors(F,C,nbase,en)
+    deallocate(en)
   ! write(*,*) en
 
 !!!------------------------------------------------------------------------!!!
     write(*,*) "* Transform eigenvectors into AO-basis..."
     allocate(work(nbase,nbase))
     call dgemm('N','N',nbase,nbase,nbase,ONE,S,nbase,C,nbase,ZERO,work,nbase)
-    C = transpose(work)
+    C = (work)
     deallocate(work)
-  ! do i = 1, nbase
-  !     write(*,*) C(i,:)
-  ! enddo
+    do i = 1, nbase
+        write(*,*) C(i,:)
+    enddo
     
 !!!------------------------------------------------------------------------!!!
     write(*,*) "* Build initial density..."
@@ -221,15 +248,15 @@ implicit none
     do i = 1, nbase
     do j = i, nbase
         D(0,i,j) = 0.0
-        do k = 1, nbase
+        do k = 1, nelec/2
             D(0,i,j) = D(0,i,j) + ( C(i,k) * C(j,k) )
         enddo
         if(i/=j) D(0,j,i) = D(0,i,j)
     enddo
     enddo
-  ! do i = 1, nbase
-  !     write(*,*) D(0,i,:)
-  ! enddo
+    do i = 1, nbase
+        write(*,*) D(0,i,:)
+    enddo
 
     write(*,*)
 !!!------------------------------------------------------------------------!!!
@@ -238,7 +265,7 @@ implicit none
 
     energy(0) = enuc
     do i = 1, nbase
-    do j = 1, nbase
+    do j = i, nbase
         energy(0) = energy(0) + D(0,i,j) * ( H(i,j) + F(i,j) )
     enddo
     enddo
@@ -246,6 +273,7 @@ implicit none
 
 !!!------------------------------------------------------------------------!!!
     write(*,*) "* Start SCF iteration"
+        converged = .true.
     scfloop: do m = 1, maxiter
     ! Calculate new Fock matrix
         do i = 1, nbase
@@ -253,30 +281,34 @@ implicit none
             F(i,j) = H(i,j)
             do k = j, nbase
             do l = k, nbase
-                F(i,j) = F(i,j) + D(m-1,i,j) * ( 2*eri(i,j,k,l) - eri(i,k,j,l) )
+                F(i,j) = F(i,j) + D(m-1,k,l) * ( 2*eri(i,j,k,l) - eri(i,k,j,l) )
             enddo
             enddo
             if(i/=j) F(j,i) = F(i,j)
         enddo
+        if(converged) write(*,*) F(i,:)
         enddo
+        converged = .false.
     ! Orthogonalize Fock Matrix
         allocate(work(nbase,nbase))
         call dgemm('T','N',nbase,nbase,nbase,ONE,S,nbase,F,nbase,ZERO,work,nbase)
         call dgemm('N','N',nbase,nbase,nbase,ONE,work,nbase,S,nbase,ZERO,F,nbase)
         deallocate(work)
     ! Diagonalize Fock Matrix
+        allocate(en(nbase))
         call eigenvectors(F,C,nbase,en)
+        deallocate(en)
     ! Back-transform AO-Basis
         allocate(work(nbase,nbase))
         call dgemm('N','N',nbase,nbase,nbase,ONE,S,nbase,C,nbase,ZERO,work,nbase)
-        C = transpose(work)
+        C = (work)
         deallocate(work)
     ! Build new density matrix
         rmsD = ZERO
         do i = 1, nbase
         do j = i, nbase
             D(m,i,j) = ZERO
-            do k = 1, nbase
+            do k = 1, nelec/2
                 D(m,i,j) = D(m,i,j) + ( C(i,k) * C(j,k) )
             enddo
             if(i/=j) D(m,j,i) = D(m,i,j)
@@ -311,9 +343,12 @@ implicit none
     deallocate(F)
     deallocate(C)
     deallocate(D)
-    deallocate(en)
     deallocate(eri)
     deallocate(energy)
+    deallocate(atom)
+    deallocate(x)
+    deallocate(y)
+    deallocate(z)
 end program main
 
 !!!++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++!!!
