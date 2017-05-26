@@ -44,7 +44,8 @@ implicit none
     integer,dimension(:),allocatable                :: atom
     double precision,dimension(:),allocatable       :: x,y,z,diagS,en
     double precision,dimension(:),allocatable       :: energy
-    double precision,dimension(:,:),allocatable     :: S,T,V,H,F,C,tranS,itraS,work
+    double precision,dimension(:,:),allocatable     :: S,T,V,H,F,C,&
+        tranS,itraS,work
     double precision,dimension(:,:,:),allocatable   :: D
     double precision,dimension(:,:,:,:),allocatable :: eri
     double precision,parameter :: ONE = 1.0, ZERO = 0.0,&
@@ -176,6 +177,15 @@ implicit none
     endif
     lcount= lcount+1
     enddo countloop2
+    do i= 1, nbase
+    do j= 1, nbase
+    do k= 1, nbase
+    do l= 1, nbase
+        eri(i,j,k,l) = ZERO
+    enddo
+    enddo
+    enddo
+    enddo
     rewind(5)
     do i = 1, lcount
         read(5,*) j,k,l,m,val
@@ -265,34 +275,43 @@ implicit none
 
     energy(0) = enuc
     do i = 1, nbase
-    do j = i, nbase
-        energy(0) = energy(0) + D(0,i,j) * ( H(i,j) + F(i,j) )
+    do j = 1, nbase
+            energy(0) = energy(0) + D(0,i,j) * ( F(i,j) + H(i,j) )
     enddo
     enddo
+    write(*,*)
     write(*,*) 0, energy(0)
 
 !!!------------------------------------------------------------------------!!!
     write(*,*) "* Start SCF iteration"
-        converged = .true.
+    converged = .false.
     scfloop: do m = 1, maxiter
     ! Calculate new Fock matrix
         do i = 1, nbase
-        do j = i, nbase
+        do j = 1, nbase
+          ! if(converged) write(9,*) i,j,F(i,j)
             F(i,j) = H(i,j)
-            do k = j, nbase
-            do l = k, nbase
+          ! if(converged) write(9,*) i,j,H(i,j)
+            do k = 1, nbase
+            do l = 1, nbase
+          ! if(converged) write(7,*) i,j,k,l,F(i,j),D(m-1,k,l),eri(i,j,k,l),eri(i,k,j,l)
                 F(i,j) = F(i,j) + D(m-1,k,l) * ( 2*eri(i,j,k,l) - eri(i,k,j,l) )
             enddo
             enddo
             if(i/=j) F(j,i) = F(i,j)
+          ! if(converged) write(9,*) i,j,F(i,j)
         enddo
-        if(converged) write(*,*) F(i,:)
+      ! if(converged) write(*,*) F(i,:)
         enddo
-        converged = .false.
+      ! if(converged) write(*,*)
     ! Orthogonalize Fock Matrix
         allocate(work(nbase,nbase))
         call dgemm('T','N',nbase,nbase,nbase,ONE,S,nbase,F,nbase,ZERO,work,nbase)
         call dgemm('N','N',nbase,nbase,nbase,ONE,work,nbase,S,nbase,ZERO,F,nbase)
+      ! do i = 1, nbase
+      !     if(converged) write(*,*) F(i,:)
+      ! enddo
+      ! converged = .false.
         deallocate(work)
     ! Diagonalize Fock Matrix
         allocate(en(nbase))
