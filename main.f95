@@ -39,19 +39,20 @@ program main
 use, intrinsic :: iso_fortran_env
 implicit none
     character(len=50) :: dirname,line
-    integer :: nargs,i,j,k,l,m,nbase,stat,lcount,nelec,natoms
+    integer :: nargs,i,j,k,l,m,n,nbase,stat,lcount,nelec,natoms
     double precision  :: enuc,val,rmsD,deltaE
     integer,dimension(:),allocatable                :: atom
     double precision,dimension(:),allocatable       :: x,y,z,diagS,en
     double precision,dimension(:),allocatable       :: energy
     double precision,dimension(:,:),allocatable     :: S,T,V,H,F,C,&
-        tranS,itraS,work
+        tranS,itraS,work,temp
     double precision,dimension(:,:,:),allocatable   :: D
     double precision,dimension(:,:,:,:),allocatable :: eri
     double precision,parameter :: ONE = 1.0, ZERO = 0.0,&
         delta1 = 0.000000000001,delta2=0.00000000001
     integer,parameter :: maxiter=100
-    logical :: converged
+    logical :: converged,debug
+    debug = .false.
 
     write(*,*) "* Fortran test program *"
     write(*,*)
@@ -85,6 +86,7 @@ implicit none
         trim(dirname)//'enuc.dat'
     open(1,file=trim(dirname)//'enuc.dat',status='old')
     read(1,*) enuc
+    if(debug) write(*,*) enuc
     close(1)
 
 !!!------------------------------------------------------------------------!!!
@@ -113,9 +115,11 @@ implicit none
         if(j/=k) S(k,j) = S(j,k)
     enddo
     close(2)
+    if(debug) then
     do i = 1, nbase
         write(*,*) S(i,:)
     enddo
+    endif
 
 !!!------------------------------------------------------------------------!!!
     write(*,*) "* Reading kinetic energy from: ", trim(dirname)//'t.dat'
@@ -127,9 +131,11 @@ implicit none
         if(k/=j) T(k,j) = T(j,k)
     enddo
     close(3)
+    if(debug) then
     do i = 1, nbase
         write(*,*) T(i,:)
     enddo
+    endif
 
 !!!------------------------------------------------------------------------!!!
     write(*,*) "* Reading nuclear attraction integrals from: ", &
@@ -142,9 +148,11 @@ implicit none
         if(k/=j) V(k,j) = V(j,k)
     enddo
     close(4)
+    if(debug) then
     do i = 1, nbase
         write(*,*) V(i,:)
     enddo
+    endif
 
 !!!------------------------------------------------------------------------!!!
     write(*,*) "* Constructing approximated Hamiltonian..."
@@ -154,7 +162,7 @@ implicit none
         H(i,j) = T(i,j) + V(i,j)
         if(i/=j) H(j,i) = H(i,j)
     enddo
-        write(*,*) H(i,:)
+    if(debug) write(*,*) H(i,:)
     enddo
     deallocate(T)
     deallocate(V)
@@ -216,31 +224,36 @@ implicit none
         enddo
     enddo
     call dgemm('N','N',nbase,nbase,nbase,ONE,tranS,nbase,itraS,nbase,ZERO,S,nbase)
+    if(debug) then
     do i = 1, nbase
         write(*,*) S(i,:)
     enddo
+    endif
     deallocate(tranS)
     deallocate(itraS)
     deallocate(diagS)
 
 !!!------------------------------------------------------------------------!!!
     write(*,*) "* Build inital Fock matrix..."
-    allocate(F(nbase,nbase))
+    allocate(temp(nbase,nbase))
     allocate(work(nbase,nbase))
     call dgemm('T','N',nbase,nbase,nbase,ONE,S,nbase,H,nbase,ZERO,work,nbase)
-    call dgemm('N','N',nbase,nbase,nbase,ONE,work,nbase,S,nbase,ZERO,F,nbase)
+    call dgemm('N','N',nbase,nbase,nbase,ONE,work,nbase,S,nbase,ZERO,temp,nbase)
     deallocate(work)
+    if(debug) then
     do i = 1, nbase
-        write(*,*) F(i,:)
+        write(*,*) temp(i,:)
     enddo
+    endif
 
 !!!------------------------------------------------------------------------!!!
     write(*,*) "* Diagonalize Fock matrix..."
     allocate(C(nbase,nbase))
     allocate(en(nbase))
-    call eigenvectors(F,C,nbase,en)
+    call eigenvectors(temp,C,nbase,en)
     deallocate(en)
-  ! write(*,*) en
+    deallocate(temp)
+    if(debug) write(*,*) en
 
 !!!------------------------------------------------------------------------!!!
     write(*,*) "* Transform eigenvectors into AO-basis..."
@@ -248,9 +261,11 @@ implicit none
     call dgemm('N','N',nbase,nbase,nbase,ONE,S,nbase,C,nbase,ZERO,work,nbase)
     C = (work)
     deallocate(work)
+    if(debug) then
     do i = 1, nbase
         write(*,*) C(i,:)
     enddo
+    endif
     
 !!!------------------------------------------------------------------------!!!
     write(*,*) "* Build initial density..."
@@ -264,59 +279,67 @@ implicit none
         if(i/=j) D(0,j,i) = D(0,i,j)
     enddo
     enddo
+    if(debug) then
     do i = 1, nbase
         write(*,*) D(0,i,:)
     enddo
+    endif
 
     write(*,*)
 !!!------------------------------------------------------------------------!!!
     write(*,*) "* Calculate the inital SCF energy"
     allocate(energy(0:maxiter))
+    allocate(F(nbase,nbase))
+    F = H
 
     energy(0) = enuc
+    val       = enuc
     do i = 1, nbase
     do j = 1, nbase
             energy(0) = energy(0) + D(0,i,j) * ( F(i,j) + H(i,j) )
     enddo
     enddo
     write(*,*)
-    write(*,*) 0, energy(0)
+    write(*,*) 0, energy(0),val
 
 !!!------------------------------------------------------------------------!!!
     write(*,*) "* Start SCF iteration"
-    converged = .false.
+    if(debug) then
+        converged = .true.
+    else
+        converged = .false.
+    endif
     scfloop: do m = 1, maxiter
     ! Calculate new Fock matrix
         do i = 1, nbase
-        do j = 1, nbase
+        do j = i, nbase
           ! if(converged) write(9,*) i,j,F(i,j)
             F(i,j) = H(i,j)
           ! if(converged) write(9,*) i,j,H(i,j)
             do k = 1, nbase
             do l = 1, nbase
-          ! if(converged) write(7,*) i,j,k,l,F(i,j),D(m-1,k,l),eri(i,j,k,l),eri(i,k,j,l)
+              ! if(converged) write(7,*) i,j,k,l,F(i,j),D(m-1,k,l),eri(i,j,k,l),eri(i,k,j,l)
                 F(i,j) = F(i,j) + D(m-1,k,l) * ( 2*eri(i,j,k,l) - eri(i,k,j,l) )
             enddo
             enddo
             if(i/=j) F(j,i) = F(i,j)
-          ! if(converged) write(9,*) i,j,F(i,j)
+            if(converged) write(9,*) i,j,F(i,j)
         enddo
-      ! if(converged) write(*,*) F(i,:)
+        if(converged) write(*,*) F(i,:)
         enddo
-      ! if(converged) write(*,*)
+        if(converged) write(*,*)
     ! Orthogonalize Fock Matrix
+        allocate(temp(nbase,nbase)) ! V is used as temp, not very beautiful though...
         allocate(work(nbase,nbase))
         call dgemm('T','N',nbase,nbase,nbase,ONE,S,nbase,F,nbase,ZERO,work,nbase)
-        call dgemm('N','N',nbase,nbase,nbase,ONE,work,nbase,S,nbase,ZERO,F,nbase)
-      ! do i = 1, nbase
-      !     if(converged) write(*,*) F(i,:)
-      ! enddo
-      ! converged = .false.
+        call dgemm('N','N',nbase,nbase,nbase,ONE,work,nbase,S,nbase,ZERO,temp,nbase)
+        if(debug) converged = .false.
         deallocate(work)
     ! Diagonalize Fock Matrix
         allocate(en(nbase))
-        call eigenvectors(F,C,nbase,en)
+        call eigenvectors(temp,C,nbase,en)
         deallocate(en)
+        deallocate(temp)
     ! Back-transform AO-Basis
         allocate(work(nbase,nbase))
         call dgemm('N','N',nbase,nbase,nbase,ONE,S,nbase,C,nbase,ZERO,work,nbase)
