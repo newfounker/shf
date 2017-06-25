@@ -1,0 +1,20 @@
+TODO-list:
+· basis set
+· calculating integrals
+– RHF done
+  · SCF done
+  · DIIS
+  · symmetry
+– Mulliken population analysis
+– electron density
+– gradient
+– geometry optimisation
+– UHF
+– spin contamination
+– MP2 done
+· CCSD in progress
+· CCSD(T)
+· KS-DFT
+  · LDA
+  · GGA
+  · hybrid
